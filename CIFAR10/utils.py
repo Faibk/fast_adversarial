@@ -1,4 +1,4 @@
-import apex.amp as amp
+#import apex.amp as amp
 import torch
 import torch.nn.functional as F
 from torchvision import datasets, transforms
@@ -68,8 +68,9 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, opt=None):
                 break
             loss = F.cross_entropy(output, y)
             if opt is not None:
-                with amp.scale_loss(loss, opt) as scaled_loss:
-                    scaled_loss.backward()
+                #with amp.scale_loss(loss, opt) as scaled_loss:
+                #    scaled_loss.backward()
+                loss.backward()
             else:
                 loss.backward()
             grad = delta.grad.detach()
