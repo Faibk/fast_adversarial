@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(
     format='[%(asctime)s] - %(message)s',
     datefmt='%Y/%m/%d %H:%M:%S',
+    filename='output.log',
     level=logging.DEBUG)
 
 
@@ -32,6 +33,7 @@ def get_args():
     parser.add_argument('--lr-type', default='cyclic')
     parser.add_argument('--fname', default='mnist_model', type=str)
     parser.add_argument('--seed', default=0, type=int)
+    parser.add_argument('--norm', default='linf', type=str, choices=['linf', 'l1', 'l2'])
     return parser.parse_args()
 
 
@@ -77,7 +79,13 @@ def main():
                 loss = F.cross_entropy(output, y)
                 loss.backward()
                 grad = delta.grad.detach()
-                delta.data = torch.clamp(delta + args.alpha * torch.sign(grad), -args.epsilon, args.epsilon)
+                if args.norm == 'linf':
+                    delta.data = torch.clamp(delta + args.alpha * torch.sign(grad), -args.epsilon, args.epsilon)
+                elif args.norm == 'l2':
+                    delta.data +=  args.alpha * torch.sign(grad)
+                    d_flat = delta.view(delta.size(0),-1)
+                    norm = d_flat.norm(p=2,dim=1).clamp(min=args.epsilon).view(delta.size(0),1,1,1)
+                    delta.data *=  args.epsilon / norm
                 delta.data = torch.max(torch.min(1-X, delta.data), 0-X)
                 delta = delta.detach()
             elif args.attack == 'none':

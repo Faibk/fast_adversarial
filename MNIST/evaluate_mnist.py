@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(
     format='[%(asctime)s %(filename)s %(name)s %(levelname)s] - %(message)s',
     datefmt='%Y/%m/%d %H:%M:%S',
+    filename='output.log',
     level=logging.DEBUG)
 
 
@@ -24,17 +25,17 @@ def clamp(X, lower_limit, upper_limit):
     return torch.max(torch.min(X, upper_limit), lower_limit)
 
 
-def attack_fgsm(model, X, y, epsilon):
+def attack_fgsm(model, X, y, epsilon, norm):
     delta = torch.zeros_like(X, requires_grad=True)
     output = model(X + delta)
     loss = F.cross_entropy(output, y)
     loss.backward()
-    grad = delta.grad.detach()
+    grad = delta.grad.detach()  
     delta.data = epsilon * torch.sign(grad)
     return delta.detach()
 
 
-def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts):
+def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, norm):
     max_loss = torch.zeros(y.shape[0]).cuda()
     max_delta = torch.zeros_like(X).cuda()
     for _ in range(restarts):
@@ -49,7 +50,13 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts):
             loss = F.cross_entropy(output, y)
             loss.backward()
             grad = delta.grad.detach()
-            d = torch.clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
+            if norm == 'linf':
+                d = torch.clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
+            elif norm == 'l2':
+                d = delta + alpha * torch.sign(grad)
+                d_flat = d.view(d.size(0),-1)
+                norm = d_flat.norm(p=2,dim=1).clamp(min=epsilon).view(d.size(0),1,1,1)
+                d *=  epsilon / norm
             d = clamp(d, 0-X, 1-X)
             delta.data[index] = d[index]
             delta.grad.zero_()
@@ -70,6 +77,7 @@ def get_args():
     parser.add_argument('--alpha', default=1e-2, type=float)
     parser.add_argument('--restarts', default=10, type=int)
     parser.add_argument('--seed', default=0, type=int)
+    parser.add_argument('--norm', default='linf', type=str, choices=['linf', 'l1', 'l2'])
     return parser.parse_args()
 
 
@@ -106,9 +114,9 @@ def main():
         for i, (X, y) in enumerate(test_loader):
             X, y = X.cuda(), y.cuda()
             if args.attack == 'pgd':
-                delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts)
+                delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts, args.norm)
             elif args.attack == 'fgsm':
-                delta = attack_fgsm(model, X, y, args.epsilon)
+                delta = attack_fgsm(model, X, y, args.epsilon, args.norm)
             with torch.no_grad():
                 output = model(X + delta)
                 loss = F.cross_entropy(output, y)
