@@ -11,6 +11,8 @@ import torchvision
 from torchvision import datasets, transforms
 from torch.utils.data import DataLoader, Dataset
 
+import matplotlib.pyplot as plt
+
 from mnist_net import mnist_net
 
 logger = logging.getLogger(__name__)
@@ -52,8 +54,13 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, norm):
             grad = delta.grad.detach()
             if norm == 'linf':
                 d = torch.clamp(delta + alpha * torch.sign(grad), -epsilon, epsilon)
-            elif norm == 'l2':
+            elif norm == 'l2': #using sign of gradient --> limits directions of gradient
                 d = delta + alpha * torch.sign(grad)
+                d_flat = d.view(d.size(0),-1)
+                norm = d_flat.norm(p=2,dim=1).clamp(min=epsilon).view(d.size(0),1,1,1)
+                d *=  epsilon / norm
+            elif norm == 'l2-scaled':
+                d = delta + alpha * grad / grad.view(grad.shape[0], -1).norm(dim=1)[:,None,None,None]
                 d_flat = d.view(d.size(0),-1)
                 norm = d_flat.norm(p=2,dim=1).clamp(min=epsilon).view(d.size(0),1,1,1)
                 d *=  epsilon / norm
@@ -77,7 +84,7 @@ def get_args():
     parser.add_argument('--alpha', default=1e-2, type=float)
     parser.add_argument('--restarts', default=10, type=int)
     parser.add_argument('--seed', default=0, type=int)
-    parser.add_argument('--norm', default='linf', type=str, choices=['linf', 'l1', 'l2'])
+    parser.add_argument('--norm', default='linf', type=str, choices=['linf', 'l1', 'l2', 'l2-scaled'])
     return parser.parse_args()
 
 
@@ -117,7 +124,8 @@ def main():
                 delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts, args.norm)
             elif args.attack == 'fgsm':
                 delta = attack_fgsm(model, X, y, args.epsilon, args.norm)
-            with torch.no_grad():
+            with torch.no_grad():   
+                #plot(X, delta, y)
                 output = model(X + delta)
                 loss = F.cross_entropy(output, y)
                 total_loss += loss.item() * y.size(0)
@@ -126,6 +134,21 @@ def main():
 
     logger.info('Test Loss: %.4f, Acc: %.4f', total_loss/n, total_acc/n)
 
+
+def plot(data, delta, label):
+        # Reshape the array into 28 x 28 array (2-dimensional array)
+        #data = data.cpu().detach()[0].reshape((28, 28))
+        delta = delta.cpu().detach().numpy().reshape((delta.shape[0],-1))
+        normal = np.ones(delta.shape[1])
+        normal[0:2] = 0
+
+        projected = delta - delta * normal * normal.transpose()
+        print(projected[1])
+        # Plot
+        #plt.title('Label is {label}'.format(label=label[0]))
+        #plt.imshow(data+delta, cmap='gray', vmin=0., vmax=1.0)
+        plt.scatter(projected[:,0], projected[:,1])
+        plt.show()
 
 if __name__ == "__main__":
     main()

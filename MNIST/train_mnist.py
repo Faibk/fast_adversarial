@@ -33,7 +33,7 @@ def get_args():
     parser.add_argument('--lr-type', default='cyclic')
     parser.add_argument('--fname', default='mnist_model', type=str)
     parser.add_argument('--seed', default=0, type=int)
-    parser.add_argument('--norm', default='linf', type=str, choices=['linf', 'l1', 'l2'])
+    parser.add_argument('--norm', default='linf', type=str, choices=['linf', 'l1', 'l2', 'l2-scaled'])
     return parser.parse_args()
 
 
@@ -83,6 +83,11 @@ def main():
                     delta.data = torch.clamp(delta + args.alpha * torch.sign(grad), -args.epsilon, args.epsilon)
                 elif args.norm == 'l2':
                     delta.data +=  args.alpha * torch.sign(grad)
+                    d_flat = delta.view(delta.size(0),-1)
+                    norm = d_flat.norm(p=2,dim=1).clamp(min=args.epsilon).view(delta.size(0),1,1,1)
+                    delta.data *=  args.epsilon / norm
+                elif args.norm == 'l2-scaled':
+                    delta.data +=  args.alpha * grad / grad.view(grad.shape[0], -1).norm(dim=1)[:,None,None,None]
                     d_flat = delta.view(delta.size(0),-1)
                     norm = d_flat.norm(p=2,dim=1).clamp(min=args.epsilon).view(delta.size(0),1,1,1)
                     delta.data *=  args.epsilon / norm
