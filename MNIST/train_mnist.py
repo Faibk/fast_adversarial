@@ -12,13 +12,9 @@ from torch.utils.data import DataLoader, Dataset
 
 from mnist_net import mnist_net
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(
-    format='[%(asctime)s] - %(message)s',
-    datefmt='%Y/%m/%d %H:%M:%S',
-    filename='output.log',
-    level=logging.DEBUG)
+from utils import clamp, attack_fgsm, attack_pgd
 
+logger = logging.getLogger(__name__)
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -28,17 +24,27 @@ def get_args():
     parser.add_argument('--attack', default='fgsm', type=str, choices=['none', 'pgd', 'fgsm'])
     parser.add_argument('--epsilon', default=0.3, type=float)
     parser.add_argument('--alpha', default=0.375, type=float)
+    parser.add_argument('--restarts', default=1, type=int)
     parser.add_argument('--attack-iters', default=40, type=int)
     parser.add_argument('--lr-max', default=5e-3, type=float)
     parser.add_argument('--lr-type', default='cyclic')
     parser.add_argument('--fname', default='mnist_model', type=str)
+    parser.add_argument('--ename', default='output', type=str, help='experiment name for logging')
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--norm', default='linf', type=str, choices=['linf', 'l1', 'l2', 'l2-scaled'])
+    parser.add_argument('--init', default='random', type=str, choices=['random', 'zero'])
     return parser.parse_args()
 
 
 def main():
     args = get_args()
+
+    logging.basicConfig(
+        format='[%(asctime)s] - %(message)s',
+        datefmt='%Y/%m/%d %H:%M:%S',
+        filename=f'{args.ename}.log',
+        level=logging.DEBUG)
+
     logger.info(args)
 
     np.random.seed(args.seed)
@@ -67,48 +73,24 @@ def main():
         train_loss = 0
         train_acc = 0
         train_n = 0
+        deltas = None
+        gradients = None
         for i, (X, y) in enumerate(train_loader):
             X, y = X.cuda(), y.cuda()
             lr = lr_schedule(epoch + (i+1)/len(train_loader))
             opt.param_groups[0].update(lr=lr)
 
             if args.attack == 'fgsm':
-                delta = torch.zeros_like(X).uniform_(-args.epsilon, args.epsilon).cuda()
-                delta.requires_grad = True
-                output = model(X + delta)
-                loss = F.cross_entropy(output, y)
-                loss.backward()
-                grad = delta.grad.detach()
-                if args.norm == 'linf':
-                    delta.data = torch.clamp(delta + args.alpha * torch.sign(grad), -args.epsilon, args.epsilon)
-                elif args.norm == 'l2':
-                    delta.data +=  args.alpha * torch.sign(grad)
-                    d_flat = delta.view(delta.size(0),-1)
-                    norm = d_flat.norm(p=2,dim=1).clamp(min=args.epsilon).view(delta.size(0),1,1,1)
-                    delta.data *=  args.epsilon / norm
-                elif args.norm == 'l2-scaled':
-                    delta.data +=  args.alpha * grad / grad.view(grad.shape[0], -1).norm(dim=1)[:,None,None,None]
-                    d_flat = delta.view(delta.size(0),-1)
-                    norm = d_flat.norm(p=2,dim=1).clamp(min=args.epsilon).view(delta.size(0),1,1,1)
-                    delta.data *=  args.epsilon / norm
-                delta.data = torch.max(torch.min(1-X, delta.data), 0-X)
-                delta = delta.detach()
+                delta = attack_fgsm(model, X, y, args.epsilon, args.alpha, args.norm, args.init)
+                if deltas != None:
+                    deltas = torch.cat((deltas, delta), dim=0)
+                else:
+                    deltas = delta
             elif args.attack == 'none':
                 delta = torch.zeros_like(X)
             elif args.attack == 'pgd':
-                delta = torch.zeros_like(X).uniform_(-args.epsilon, args.epsilon)
-                delta.data = torch.max(torch.min(1-X, delta.data), 0-X)
-                for _ in range(args.attack_iters):
-                    delta.requires_grad = True
-                    output = model(X + delta)
-                    loss = criterion(output, y)
-                    opt.zero_grad()
-                    loss.backward()
-                    grad = delta.grad.detach()
-                    I = output.max(1)[1] == y
-                    delta.data[I] = torch.clamp(delta + args.alpha * torch.sign(grad), -args.epsilon, args.epsilon)[I]
-                    delta.data[I] = torch.max(torch.min(1-X, delta.data), 0-X)[I]
-                delta = delta.detach()
+                delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts, args.norm, args.init)
+            
             output = model(torch.clamp(X + delta, 0, 1))
             loss = criterion(output, y)
             opt.zero_grad()
@@ -123,6 +105,9 @@ def main():
         logger.info('%d \t %.1f \t %.4f \t %.4f \t %.4f',
             epoch, train_time - start_time, lr, train_loss/train_n, train_acc/train_n)
         torch.save(model.state_dict(), args.fname)
+        if deltas != None and gradients != None:
+            torch.save(deltas.cpu(), args.fname+'_deltas')
+            torch.save(gradients.cpu(), args.fname+'_gradients')
 
 
 if __name__ == "__main__":

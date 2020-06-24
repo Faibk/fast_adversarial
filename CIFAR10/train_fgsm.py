@@ -136,6 +136,7 @@ def main():
             with torch.no_grad():
                 output = model(clamp(X + pgd_delta[:X.size(0)], lower_limit, upper_limit))
             robust_acc = (output.max(1)[1] == y).sum().item() / y.size(0)
+            logger.info(f'robust accuracy: {robust_acc}')
             if robust_acc - prev_robust_acc < -0.2:
                 break
             prev_robust_acc = robust_acc
