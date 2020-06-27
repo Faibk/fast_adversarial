@@ -72,7 +72,7 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, norm, init):
     for _ in range(restarts):
         #init
         if init == 'zero':
-            delta.zeros_like(X).cuda()
+            delta = torch.zeros_like(X).cuda()
         elif init == 'random':
             if norm == 'l2-scaled':
                 delta = torch.zeros_like(X).cuda().normal_()
@@ -88,7 +88,7 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, norm, init):
                 delta.data /= norms_l1(delta.detach()).clamp(min=epsilon)
             else:
                 delta = torch.zeros_like(X).cuda().uniform_(-epsilon, epsilon)
-        delta.data = clamp(delta, 0-X, 1-X)
+        #delta.data = clamp(delta, 0-X, 1-X)
         delta.requires_grad = True
 
         for _ in range(attack_iters):
