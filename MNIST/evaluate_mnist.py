@@ -63,6 +63,7 @@ def main():
     total_acc = 0
     n = 0
 
+    deltas = None
     if args.attack == 'none':
         with torch.no_grad():
             for i, (X, y) in enumerate(test_loader):
@@ -73,7 +74,6 @@ def main():
                 total_acc += (output.max(1)[1] == y).sum().item()
                 n += y.size(0)
     else:
-        deltas = None
         for i, (X, y) in enumerate(test_loader):
             X, y = X.cuda(), y.cuda()
             if args.attack == 'pgd':
@@ -95,7 +95,8 @@ def main():
                 n += y.size(0)
 
     logger.info('Test Loss: %.4f, Acc: %.4f', total_loss/n, total_acc/n)
-    torch.save(deltas.cpu(), args.fname+'_eval_deltas')
+    if deltas != None:
+        torch.save(deltas.cpu(), args.fname+'_eval_deltas')
 
 
 def plot(data, delta, label):

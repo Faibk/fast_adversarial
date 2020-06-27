@@ -22,6 +22,7 @@ def get_args():
     parser.add_argument('--data-dir', default='../mnist-data', type=str)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--attack', default='fgsm', type=str, choices=['none', 'pgd', 'fgsm'])
+    parser.add_argument('--attack-type', default='single', choices=['single', 'max', 'avg', 'random'])
     parser.add_argument('--epsilon', default=0.3, type=float)
     parser.add_argument('--alpha', default=0.375, type=float)
     parser.add_argument('--restarts', default=1, type=int)
@@ -75,13 +76,22 @@ def main():
         train_n = 0
         deltas = None
         gradients = None
+        selected_attack = []
         for i, (X, y) in enumerate(train_loader):
             X, y = X.cuda(), y.cuda()
             lr = lr_schedule(epoch + (i+1)/len(train_loader))
             opt.param_groups[0].update(lr=lr)
 
             if args.attack == 'fgsm':
-                delta = attack_fgsm(model, X, y, args.epsilon, args.alpha, args.norm, args.init)
+                if args.attack_type == 'random':
+                    norms_list = ['linf', 'l1', 'l2-scaled']
+                    epsilon_list = [0.3, 6.5, 19.0]
+                    alpha_list = [0.375, 2.5, 23.75]
+                    curr_norm =  np.random.randint(len(norms_list))
+                    selected_attack.append(norms_list[curr_norm])
+                    delta = attack_fgsm(model, X, y, epsilon_list[curr_norm], alpha_list[curr_norm], norms_list[curr_norm], args.init)
+                else:
+                    delta = attack_fgsm(model, X, y, args.epsilon, args.alpha, args.norm, args.init)
                 if deltas != None:
                     deltas = torch.cat((deltas, delta), dim=0)
                 else:
@@ -89,7 +99,15 @@ def main():
             elif args.attack == 'none':
                 delta = torch.zeros_like(X)
             elif args.attack == 'pgd':
-                delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts, args.norm, args.init)
+                if args.attack_type == 'random':
+                    norms_list = ['linf', 'l1', 'l2-scaled']
+                    epsilon_list = [0.3, 6.5, 19.0]
+                    alpha_list = [0.01, 0.03, 0.1]
+                    curr_norm =  np.random.randint(len(norms_list))
+                    selected_attack.append(norms_list[curr_norm])
+                    delta = attack_pgd(model, X, y, epsilon_list[curr_norm], alpha_list[curr_norm], args.attack_iters, args.restarts, norms_list[curr_norm], args.init)
+                else:
+                    delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts, args.norm, args.init)
             
             output = model(torch.clamp(X + delta, 0, 1))
             loss = criterion(output, y)
@@ -109,6 +127,7 @@ def main():
             torch.save(deltas.cpu(), args.fname+'_deltas')
         if gradients != None:
             torch.save(gradients.cpu(), args.fname+'_gradients')
+        #np.array(selected_attack)
 
 
 if __name__ == "__main__":
