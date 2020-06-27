@@ -105,8 +105,9 @@ def main():
         logger.info('%d \t %.1f \t %.4f \t %.4f \t %.4f',
             epoch, train_time - start_time, lr, train_loss/train_n, train_acc/train_n)
         torch.save(model.state_dict(), args.fname)
-        if deltas != None and gradients != None:
+        if deltas != None:
             torch.save(deltas.cpu(), args.fname+'_deltas')
+        if gradients != None:
             torch.save(gradients.cpu(), args.fname+'_gradients')
 
 
