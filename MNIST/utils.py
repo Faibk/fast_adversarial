@@ -86,9 +86,9 @@ def attack_pgd(model, X, y, epsilon, alpha, attack_iters, restarts, norm, init):
                 delta.data = ini.sample(delta.data.shape)
                 delta.data = (2.0*delta.data - 1.0) * epsilon 
                 delta.data /= norms_l1(delta.detach()).clamp(min=epsilon)
+                delta.data = clamp(delta, 0-X, 1-X)
             else:
                 delta = torch.zeros_like(X).cuda().uniform_(-epsilon, epsilon)
-        #delta.data = clamp(delta, 0-X, 1-X)
         delta.requires_grad = True
 
         for _ in range(attack_iters):

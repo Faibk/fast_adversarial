@@ -22,7 +22,7 @@ def get_args():
     parser.add_argument('--data-dir', default='../mnist-data', type=str)
     parser.add_argument('--epochs', default=10, type=int)
     parser.add_argument('--attack', default='fgsm', type=str, choices=['none', 'pgd', 'fgsm'])
-    parser.add_argument('--attack-type', default='single', choices=['single', 'max', 'avg', 'random'])
+    parser.add_argument('--attack-type', default='single', choices=['single', 'max', 'avg', 'random', 'avg_loss'])
     parser.add_argument('--epsilon', default=0.3, type=float)
     parser.add_argument('--alpha', default=0.375, type=float)
     parser.add_argument('--restarts', default=1, type=int)
@@ -84,36 +84,85 @@ def main():
 
             if args.attack == 'fgsm':
                 if args.attack_type == 'random':
-                    norms_list = ['linf', 'l1', 'l2-scaled']
-                    epsilon_list = [0.3, 6.5, 19.0]
-                    alpha_list = [0.375, 2.5, 23.75]
+                    norms_list = ['linf', 'l2-scaled', 'l1']
+                    epsilon_list = [0.3, 6.5, 180.0]
+                    alpha_list = [0.375, 2.5, 225.0]
                     curr_norm =  np.random.randint(len(norms_list))
                     selected_attack.append(norms_list[curr_norm])
                     delta = attack_fgsm(model, X, y, epsilon_list[curr_norm], alpha_list[curr_norm], norms_list[curr_norm], args.init)
+                elif args.attack_type == 'max' or args.attack_type == "avg" or args.attack_type == "avg_loss":
+                    norms_list = ['linf', 'l2-scaled', 'l1']
+                    epsilon_list = [0.3, 6.5, 180.0]
+                    alpha_list = [0.375, 2.5, 225.0]
+                    delta_linf = attack_fgsm(model, X, y, epsilon_list[0], alpha_list[0], norms_list[0], args.init)
+                    delta_l1 = attack_fgsm(model, X, y, epsilon_list[1], alpha_list[1], norms_list[1], args.init)
+                    delta_l2 = attack_fgsm(model, X, y, epsilon_list[2], alpha_list[2], norms_list[2], args.init)
                 else:
                     delta = attack_fgsm(model, X, y, args.epsilon, args.alpha, args.norm, args.init)
-                if deltas != None:
-                    deltas = torch.cat((deltas, delta), dim=0)
-                else:
-                    deltas = delta
+                #if deltas != None:
+                #    deltas = torch.cat((deltas, delta), dim=0)
+                #else:
+                #    deltas = delta
             elif args.attack == 'none':
                 delta = torch.zeros_like(X)
             elif args.attack == 'pgd':
                 if args.attack_type == 'random':
                     norms_list = ['linf', 'l1', 'l2-scaled']
-                    epsilon_list = [0.3, 6.5, 19.0]
-                    alpha_list = [0.01, 0.03, 0.1]
+                    epsilon_list = [0.3, 6.5, 180.0]
+                    alpha_list = [0.01, 0.03, 6.0]
                     curr_norm =  np.random.randint(len(norms_list))
                     selected_attack.append(norms_list[curr_norm])
                     delta = attack_pgd(model, X, y, epsilon_list[curr_norm], alpha_list[curr_norm], args.attack_iters, args.restarts, norms_list[curr_norm], args.init)
                 else:
                     delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts, args.norm, args.init)
             
-            output = model(torch.clamp(X + delta, 0, 1))
-            loss = criterion(output, y)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
+            if args.attack_type == "single" or args.attack_type == "random":
+                output = model(torch.clamp(X + delta, 0, 1))
+                loss = criterion(output, y)
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+            elif args.attack_type == 'max':
+                output_linf = model(torch.clamp(X + delta_linf[:X.size(0)], 0, 1))
+                output_l1 = model(torch.clamp(X + delta_l1[:X.size(0)], 0, 1))
+                output_l2 = model(torch.clamp(X + delta_l2[:X.size(0)], 0, 1))
+                loss_linf = criterion(output_linf, y)
+                loss_l1 = criterion(output_l1, y)
+                loss_l2 = criterion(output_l2, y)
+
+                acc_linf = (output_linf.max(1)[1] == y).sum().item()
+                acc_l1 = (output_l1.max(1)[1] == y).sum().item()
+                acc_l2 = (output_l2.max(1)[1] == y).sum().item()
+
+                loss_list = [loss_l1, loss_l2, loss_linf]
+                acc_list = [acc_l1, acc_l2, acc_linf]
+
+                delta_list = [delta_l1, delta_l2, delta_linf]
+                max_loss =  max(loss_list)
+                max_loss_index = loss_list.index(max_loss)
+                max_delta = delta_list[max_loss_index]
+
+                output = model(torch.clamp(X + max_delta[:X.size(0)], 0, 1))
+                loss = criterion(output, y)
+                opt.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+                opt.step()
+            elif args.attack_type == "avg_loss":
+                output = model(torch.clamp(X + delta_linf[:X.size(0)], 0, 1))
+                loss_linf = criterion(output, y)
+                output_l1 = model(torch.clamp(X + delta_l1[:X.size(0)], 0, 1))
+                loss_l1 = criterion(output_l1, y)
+                output_l2 = model(torch.clamp(X + delta_l2[:X.size(0)], 0, 1))
+                loss_l2 = criterion(output_l2, y)
+
+                loss = (loss_linf + loss_l1 + loss_l2)/3
+
+                opt.zero_grad()
+                # with amp.scale_loss(loss, opt) as scaled_loss:
+                loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+                opt.step()
 
             train_loss += loss.item() * y.size(0)
             train_acc += (output.max(1)[1] == y).sum().item()
