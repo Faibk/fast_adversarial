@@ -107,12 +107,19 @@ def main():
                 delta = torch.zeros_like(X)
             elif args.attack == 'pgd':
                 if args.attack_type == 'random':
-                    norms_list = ['linf', 'l1', 'l2-scaled']
+                    norms_list = ['linf', 'l2-scaled', 'l1']
                     epsilon_list = [0.3, 6.5, 180.0]
                     alpha_list = [0.01, 0.03, 6.0]
                     curr_norm =  np.random.randint(len(norms_list))
                     selected_attack.append(norms_list[curr_norm])
                     delta = attack_pgd(model, X, y, epsilon_list[curr_norm], alpha_list[curr_norm], args.attack_iters, args.restarts, norms_list[curr_norm], args.init)
+                elif args.attack_type == 'max' or args.attack_type == "avg" or args.attack_type == "avg_loss":
+                    norms_list = ['linf', 'l2-scaled', 'l1']
+                    epsilon_list = [0.3, 6.5, 180.0]
+                    alpha_list = [0.01, 0.03, 6.0]
+                    delta_linf = attack_pgd(model, X, y, epsilon_list[0], alpha_list[0], args.attack_iters, args.restarts, norms_list[0], args.init)
+                    delta_l1 = attack_pgd(model, X, y, epsilon_list[1], alpha_list[1], args.attack_iters, args.restarts, norms_list[1], args.init)
+                    delta_l2 = attack_pgd(model, X, y, epsilon_list[2], alpha_list[2], args.attack_iters, args.restarts, norms_list[2], args.init)
                 else:
                     delta = attack_pgd(model, X, y, args.epsilon, args.alpha, args.attack_iters, args.restarts, args.norm, args.init)
             
